@@ -15,25 +15,29 @@
  *  * the License.
  *
  */
- 
+
 package hessian
 
 import (
-        "fmt"
-        "testing"
-        "reflect"
-       )
+    "fmt"
+    "testing"
+    "reflect"
+)
 
 type Person struct {
-    firstName string
-    lastName string
+    FirstName string
+    LastName  string
 }
 
 func TestSerializer(t *testing.T) {
-	p := Person{"John","Doe"}
-	gh := NewGoHessian(nil, nil)
-	bt, _ := gh.ToBytes(p)
+    typMap := map[string]reflect.Type{
+        "Person":reflect.TypeOf(Person{}),
+    }
+    p := Person{"John", "Doe"}
+    gh := NewGoHessian(typMap, nil)
+    bt, _ := gh.ToBytes(p)
     p_new, _ := gh.ToObject(bt)
-	fmt.Println("bt", string(bt))
+    fmt.Println("bt", string(bt))
+    fmt.Println("p_new", p_new)
     reflect.DeepEqual(p, p_new)
 }

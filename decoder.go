@@ -15,7 +15,7 @@
  *  * the License.
  *
  */
- 
+
 /*
 decoder implement hessian 2 protocol, It follows java hessian package standard.
 It assume that you using the java name convention
@@ -40,6 +40,8 @@ import (
 	"math"
 	"reflect"
 	"strings"
+//	"unicode/utf8"
+//	"unicode/utf8"
 )
 
 var _ = bytes.MinRead
@@ -281,23 +283,17 @@ func (d *decoder) readString(flag int32) (interface{}, error) {
 			return nil, newCodecError("getStrLen", err)
 		}
 		len = l
-		data := make([]byte, len)
+		runeDate := make([]rune, len)
 		for i := 0; ; {
 			if int32(i) == len {
 				if last {
 					//fmt.Println("last ", last, "i", i, "len", len)
-					return string(data), nil
+					return string(runeDate), nil
 				}
 
-				buf := make([]byte, 1)
-				_, err := io.ReadFull(d.reader, buf)
-
-				if err != nil {
-					return nil, newCodecError("byte1 integer", err)
-				}
-				b := buf[0]
+				b, _ := d.readBufByte()
 				switch {
-				case b == BC_STRING_CHUNK || b == BC_STRING:
+				case (tag >= BC_STRING_DIRECT && tag <= STRING_DIRECT_MAX) || (tag >= 0x30 && tag <= 0x33) || (tag == BC_STRING_CHUNK || tag == BC_STRING) :
 					if b == BC_STRING_CHUNK {
 						last = false
 					} else {
@@ -308,28 +304,41 @@ func (d *decoder) readString(flag int32) (interface{}, error) {
 						return nil, newCodecError("getStrLen", err)
 					}
 					len += l
-					bs := make([]byte, 0, len)
-					copy(bs, data)
-					data = bs
+					bs:=make([]rune, len)
+					copy(bs, runeDate)
+					runeDate = bs
 				default:
 					return nil, newCodecError("tag error ", err)
 				}
 			} else {
-				buf := make([]byte, 1)
-				_, err := io.ReadFull(d.reader, buf)
+				runeOne ,_,err:=getRune(d.reader)
+				runeDate[i]=runeOne
 				if err != nil {
 					return nil, newCodecError("byte2 integer", err)
 				}
-				data[i] = buf[0]
 				i++
 			}
 		}
-		return string(data), nil
+		return string(runeDate), nil
 	} else {
 		fmt.Println(tag, len, last)
 		return nil, newCodecError("byte3 integer")
 	}
 
+}
+
+func getRune(reader io.Reader)(rune,int,error){
+	typ:=reflect.TypeOf(reader.(interface{}))
+	if(typ==reflect.TypeOf(&bytes.Buffer{})){
+		byteReader:=reader.(interface{}).(*bytes.Buffer)
+		return byteReader.ReadRune()
+	}
+	if(typ==reflect.TypeOf(&bytes.Reader{})){
+		byteReader:=reader.(interface{}).(*bytes.Reader)
+		return byteReader.ReadRune()
+	}
+	var runeNil rune
+	return runeNil,0,nil
 }
 
 func (d *decoder) getStrLen(tag byte) (int32, error) {
@@ -346,12 +355,13 @@ func (d *decoder) getStrLen(tag byte) (int32, error) {
 		return len, nil
 
 	case tag == BC_STRING_CHUNK || tag == BC_STRING:
-		buf := make([]byte, 1)
+		//bugfix zhangchengjie
+		buf := make([]byte, 2)
 		_, err := io.ReadFull(d.reader, buf)
 		if err != nil {
 			return -1, newCodecError("byte5 integer", err)
 		}
-		len := int32(tag)<<8 + int32(buf[0])
+		len := int32(buf[0])<<8 + int32(buf[1])
 		return len, nil
 	default:
 		return -1, newCodecError("getStrLen")
@@ -415,7 +425,7 @@ func (d *decoder) readInstance(typ reflect.Type, cls ClassDef) (interface{}, err
 				fmt.Println("struct error", err)
 			}
 			fldValue.Set(reflect.Indirect(s.(reflect.Value)))
-			fmt.Println("s with struct", s)
+			//fmt.Println("s with struct", s)
 		case kind == reflect.Map:
 			//m, _ := d.ReadObject()
 			//fmt.Println("struct map", m)
@@ -458,7 +468,7 @@ func (d *decoder) readMap(value reflect.Value) error {
 			}
 		}
 		vl, err := d.ReadObject()
-		fmt.Println(key, vl)
+		//fmt.Println(key, vl)
 		m.SetMapIndex(reflect.ValueOf(key), reflect.ValueOf(vl))
 	}
 	value.Set(m)
@@ -582,7 +592,7 @@ func (d *decoder) ReadObject() (interface{}, error) {
 				}
 			}
 			value, err := d.ReadObject()
-			fmt.Println(key, value)
+		//	fmt.Println(key, value)
 			m[key] = value
 		}
 	case tag == BC_OBJECT_DEF:
@@ -730,6 +740,7 @@ func (d *decoder) ReadObject() (interface{}, error) {
 		//fmt.Println("endList", bt)
 		return ary, nil
 	default:
+		fmt.Println("unkonw tag" , tag)
 		return nil, newCodecError("unkonw tag")
 	}
 	return nil, newCodecError("wrong tag")
@@ -847,7 +858,7 @@ func (d *decoder) readClassDef() (interface{}, error) {
 	if !ok {
 		return nil, newCodecError("wrong type")
 	}
-	fmt.Println("clsName", clsName)
+	//fmt.Println("clsName", clsName)
 	n, err := d.readInt(TAG_READ)
 	if err != nil {
 		return nil, newCodecError("ReadClassDef", err)

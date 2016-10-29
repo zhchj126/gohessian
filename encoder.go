@@ -24,6 +24,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 )
 
 type encoder struct {
@@ -160,11 +161,11 @@ func buildKey(key reflect.Value, typ reflect.Type) interface{} {
 }
 
 func (e *encoder) writeString(value string) (int, error) {
-	dataBys := []byte(value)
-	l := len(dataBys)
+	dataRunes:=[]rune(value)
+	leftWordL :=utf8.RuneCountInString(value)
 	sub := 0x8000
 	begin := 0
-	for l > sub {
+	for leftWordL > sub {
 		buf := make([]byte, 3)
 		buf[0] = BC_STRING_CHUNK
 		buf[1] = byte(sub >> 8)
@@ -173,39 +174,45 @@ func (e *encoder) writeString(value string) (int, error) {
 		if err != nil {
 			return 0, newCodecError("writeString", err)
 		}
-		buf = make([]byte, sub)
-		copy(buf, dataBys[begin:begin+sub])
-		_, err = e.writer.Write(buf)
+		wordBuf := make([]rune, sub)
+		copy(wordBuf, dataRunes[begin:begin+sub])
+		_, err = e.writer.Write([]byte(string(wordBuf)))
 		if err != nil {
 			return 0, newCodecError("writeString", err)
 		}
-		l -= sub
+		leftWordL -= sub
 		begin += sub
 	}
 	var buf []byte
-	if l == 0 {
-		return len(dataBys), nil
-	} else if l <= int(STRING_DIRECT_MAX) {
+	if leftWordL == 0 {
+		//bugfix: for empty string "", should Write 0x00
 		buf = make([]byte, 1)
-		buf[0] = byte(l + int(BC_STRING_DIRECT))
-	} else if l <= int(STRING_SHORT_MAX) {
+		buf[0] = byte(leftWordL + int(BC_STRING_DIRECT))
+		e.writer.Write(buf)
+		return len(dataRunes), nil
+	} else if leftWordL <= int(STRING_DIRECT_MAX) {
+		buf = make([]byte, 1)
+		buf[0] = byte(leftWordL + int(BC_STRING_DIRECT))
+	} else if leftWordL <= int(STRING_SHORT_MAX) {
 		buf = make([]byte, 2)
-		buf[0] = byte((l >> 8) + int(BC_STRING_SHORT))
-		buf[1] = byte(l)
+		buf[0] = byte((leftWordL >> 8) + int(BC_STRING_SHORT))
+		buf[1] = byte(leftWordL)
 	} else {
+		//bugfix
 		buf = make([]byte, 3)
 		buf[0] = BC_STRING
-		buf[0] = byte(l >> 8)
-		buf[1] = byte(l)
+		buf[1] = byte(leftWordL >> 8)
+		buf[2] = byte(leftWordL)
 	}
-	bs := make([]byte, l+len(buf))
-	copy(bs[0:], buf)
-	copy(bs[len(buf):], dataBys[begin:])
-	_, err := e.writer.Write(bs)
+	_, err := e.writer.Write(buf)
 	if err != nil {
 		return 0, newCodecError("writeString", err)
 	}
-	return l, nil
+	_, err = e.writer.Write([]byte(string(dataRunes[begin:])))
+	if err != nil {
+		return 0, newCodecError("writeString", err)
+	}
+	return len(dataRunes), nil
 }
 
 func (e *encoder) writeList(data interface{}) (int, error) {
@@ -213,11 +220,12 @@ func (e *encoder) writeList(data interface{}) (int, error) {
 	vv := reflect.ValueOf(data)
 	e.writeBT(BC_LIST_FIXED_UNTYPED)
 	e.writeInt(int32(vv.Len()))
-	fmt.Println("list", vv.Len(), data)
+	//fmt.Println("list", vv.Len(), data)
 	for i := 0; i < vv.Len(); i++ {
 		e.WriteObject(vv.Index(i).Interface())
 	}
-	e.writeBT(BC_END)
+	//bugfix: no need for BC_END
+	//e.writeBT(BC_END)
 	return vv.Len(), nil
 }
 
@@ -353,7 +361,7 @@ func (e *encoder) writeBT(bs ...byte) (int, error) {
 }
 
 func (e *encoder) writeInstance(data interface{}) (int, error) {
-	fmt.Println("struct", data)
+	//fmt.Println("struct", data)
 	typ := reflect.TypeOf(data)
 	vv := reflect.ValueOf(data)
 
